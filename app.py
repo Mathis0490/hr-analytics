@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -633,6 +634,243 @@ with tab2:
                         st.warning("⚠️ **Mittlere Datenqualität.** Einige Analysen könnten ungenau sein.")
                     else:
                         st.error("❌ **Datenqualität verbesserungswürdig.** Bitte prüfen Sie die markierten Probleme.")
+                    
+                    # ============================================
+                    # INTERAKTIVE MISSING VALUES MATRIX
+                    # ============================================
+                    st.markdown("---")
+                    st.markdown("## 🗺️ Daten-Matrix: Wo fehlen Daten? Wo sind Ausreißer?")
+                    
+                    st.markdown("""
+                    <div class="help-text">
+                    <b>💡 So lesen Sie diese Matrix:</b><br><br>
+                    • Jede <b>Zeile</b> = ein Mitarbeiter (oben = erster, unten = letzter)<br>
+                    • Jede <b>Spalte</b> = ein Datenfeld<br>
+                    • <span style="color:#2ecc71"><b>■ Grün</b></span> = Daten vorhanden und OK<br>
+                    • <span style="color:#e74c3c"><b>■ Rot</b></span> = Daten fehlen (leere Zelle)<br>
+                    • <span style="color:#f39c12"><b>■ Orange</b></span> = Ausreißer / ungewöhnlicher Wert<br><br>
+                    <b>Tipp:</b> Fahren Sie mit der Maus über die Matrix um Details zu sehen!
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Erstelle Matrix-Daten
+                    # Spalten für die Matrix auswählen
+                    matrix_spalten = []
+                    matrix_namen = []
+                    
+                    spalten_mapping = [
+                        (col_geb, 'Geburtsjahr'),
+                        (col_ein, 'Eintrittsjahr'),
+                        (col_ges, 'Geschlecht'),
+                        (col_abt, 'Abteilung'),
+                        (col_lvl, 'Level'),
+                        (col_geh, 'Gehalt'),
+                        (col_az, 'Arbeitszeit'),
+                        (col_ein_pos, 'Einstiegs-Pos'),
+                        (col_akt_pos, 'Aktuelle Pos'),
+                        (col_ort, 'Standort')
+                    ]
+                    
+                    for col, name in spalten_mapping:
+                        if col and col in df.columns:
+                            matrix_spalten.append(col)
+                            matrix_namen.append(name)
+                    
+                    if matrix_spalten:
+                        # Limitiere auf max 200 Zeilen für Performance
+                        max_rows = min(len(df), 200)
+                        df_sample = df.head(max_rows).copy()
+                        
+                        # Matrix erstellen: 0=OK, 1=Fehlend, 2=Ausreißer
+                        matrix_data = []
+                        hover_texts = []
+                        
+                        for idx, row in df_sample.iterrows():
+                            row_data = []
+                            row_hover = []
+                            ma_id = row.get('Mitarbeiter_ID', f'Zeile {idx+1}')
+                            
+                            for col, name in zip(matrix_spalten, matrix_namen):
+                                val = row[col]
+                                
+                                # Prüfe ob fehlend
+                                if pd.isna(val):
+                                    row_data.append(1)  # Rot - fehlend
+                                    row_hover.append(f"{ma_id}<br>{name}: FEHLT")
+                                else:
+                                    # Prüfe auf Ausreißer
+                                    is_ausreisser = False
+                                    ausreisser_grund = ""
+                                    
+                                    # Geburtsjahr-Ausreißer
+                                    if col == col_geb and 'Alter' in df.columns:
+                                        alter = jahr - val
+                                        if alter < 16:
+                                            is_ausreisser = True
+                                            ausreisser_grund = f"Alter {alter} (zu jung!)"
+                                        elif alter > 70:
+                                            is_ausreisser = True
+                                            ausreisser_grund = f"Alter {alter} (sehr alt)"
+                                    
+                                    # Eintrittsjahr-Ausreißer
+                                    if col == col_ein:
+                                        dj_val = jahr - val
+                                        if dj_val < 0:
+                                            is_ausreisser = True
+                                            ausreisser_grund = f"Eintritt {val} (Zukunft!)"
+                                        elif dj_val > 50:
+                                            is_ausreisser = True
+                                            ausreisser_grund = f"{dj_val} Dienstjahre (sehr lang)"
+                                        # Logik-Check
+                                        if col_geb and col_geb in row and not pd.isna(row[col_geb]):
+                                            if val < row[col_geb]:
+                                                is_ausreisser = True
+                                                ausreisser_grund = f"Eintritt {val} vor Geburt {row[col_geb]}!"
+                                            elif (val - row[col_geb]) < 14:
+                                                is_ausreisser = True
+                                                ausreisser_grund = f"Eintritt mit {val - row[col_geb]} Jahren (Kind!)"
+                                    
+                                    # Gehalt-Ausreißer
+                                    if col == col_geh:
+                                        if val < 15000:
+                                            is_ausreisser = True
+                                            ausreisser_grund = f"{val:,.0f}€ (sehr niedrig)"
+                                        elif val > 300000:
+                                            is_ausreisser = True
+                                            ausreisser_grund = f"{val:,.0f}€ (sehr hoch)"
+                                    
+                                    if is_ausreisser:
+                                        row_data.append(2)  # Orange - Ausreißer
+                                        row_hover.append(f"{ma_id}<br>{name}: {ausreisser_grund}")
+                                    else:
+                                        row_data.append(0)  # Grün - OK
+                                        # Wert formatieren für Hover
+                                        if col == col_geh:
+                                            val_str = f"{val:,.0f}€"
+                                        else:
+                                            val_str = str(val)
+                                        row_hover.append(f"{ma_id}<br>{name}: {val_str}")
+                            
+                            matrix_data.append(row_data)
+                            hover_texts.append(row_hover)
+                        
+                        # Plotly Heatmap erstellen
+                        import numpy as np
+                        
+                        # Farbskala: 0=Grün, 1=Rot, 2=Orange
+                        colorscale = [
+                            [0, '#2ecc71'],      # 0 = Grün (OK)
+                            [0.5, '#e74c3c'],    # 1 = Rot (Fehlend)
+                            [1, '#f39c12']       # 2 = Orange (Ausreißer)
+                        ]
+                        
+                        fig_matrix = go.Figure(data=go.Heatmap(
+                            z=matrix_data,
+                            x=matrix_namen,
+                            y=[f"MA {i+1}" for i in range(len(matrix_data))],
+                            hoverongaps=False,
+                            hovertext=hover_texts,
+                            hovertemplate='%{hovertext}<extra></extra>',
+                            colorscale=colorscale,
+                            zmin=0,
+                            zmax=2,
+                            showscale=False
+                        ))
+                        
+                        fig_matrix.update_layout(
+                            title=f"Daten-Matrix ({max_rows} von {len(df)} Mitarbeitern)" + 
+                                  (" ⚠️ Zeigt nur erste 200" if len(df) > 200 else ""),
+                            xaxis_title="Datenfelder",
+                            yaxis_title="Mitarbeiter",
+                            height=max(400, min(800, max_rows * 4)),
+                            font=dict(size=12),
+                            xaxis=dict(side='top', tickangle=-45),
+                            yaxis=dict(autorange='reversed')  # Erste Zeile oben
+                        )
+                        
+                        st.plotly_chart(fig_matrix, use_container_width=True)
+                        charts_html.append(('00_Daten_Matrix.html', fig_matrix.to_html()))
+                        
+                        # Legende
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            ok_count = sum(1 for row in matrix_data for val in row if val == 0)
+                            st.markdown(f"🟢 **OK:** {ok_count} Felder")
+                        with col2:
+                            fehlend_count = sum(1 for row in matrix_data for val in row if val == 1)
+                            st.markdown(f"🔴 **Fehlend:** {fehlend_count} Felder")
+                        with col3:
+                            ausreisser_count_matrix = sum(1 for row in matrix_data for val in row if val == 2)
+                            st.markdown(f"🟡 **Ausreißer:** {ausreisser_count_matrix} Felder")
+                    
+                    # ============================================
+                    # TABELLE MIT PROBLEM-DATENSÄTZEN
+                    # ============================================
+                    st.markdown("### 📋 Datensätze mit Problemen")
+                    
+                    # Sammle alle Problem-Zeilen
+                    problem_rows = []
+                    
+                    for idx, row in df.iterrows():
+                        probleme = []
+                        
+                        # Fehlende Werte
+                        for col, name in spalten_mapping:
+                            if col and col in df.columns and pd.isna(row[col]):
+                                probleme.append(f"❌ {name} fehlt")
+                        
+                        # Ausreißer
+                        if 'Alter' in df.columns and not pd.isna(row.get('Alter')):
+                            if row['Alter'] < 16:
+                                probleme.append(f"⚠️ Alter {row['Alter']:.0f} (zu jung)")
+                            elif row['Alter'] > 70:
+                                probleme.append(f"⚠️ Alter {row['Alter']:.0f} (sehr alt)")
+                        
+                        if 'DJ' in df.columns and not pd.isna(row.get('DJ')):
+                            if row['DJ'] < 0:
+                                probleme.append(f"⚠️ {row['DJ']:.0f} Dienstjahre (negativ!)")
+                            elif row['DJ'] > 50:
+                                probleme.append(f"⚠️ {row['DJ']:.0f} Dienstjahre (sehr lang)")
+                        
+                        if 'Gehalt' in df.columns and not pd.isna(row.get('Gehalt')):
+                            if row['Gehalt'] < 15000:
+                                probleme.append(f"⚠️ Gehalt {row['Gehalt']:,.0f}€ (niedrig)")
+                            elif row['Gehalt'] > 300000:
+                                probleme.append(f"⚠️ Gehalt {row['Gehalt']:,.0f}€ (hoch)")
+                        
+                        # Logik-Fehler
+                        if col_geb and col_ein and col_geb in df.columns and col_ein in df.columns:
+                            if not pd.isna(row[col_geb]) and not pd.isna(row[col_ein]):
+                                if row[col_ein] < row[col_geb]:
+                                    probleme.append(f"🚫 Eintritt vor Geburt!")
+                                elif (row[col_ein] - row[col_geb]) < 14:
+                                    probleme.append(f"🚫 Eintritt mit {row[col_ein] - row[col_geb]} Jahren")
+                        
+                        if probleme:
+                            problem_rows.append({
+                                'ID': row.get('Mitarbeiter_ID', f'Zeile {idx+1}'),
+                                'Geburtsjahr': row.get(col_geb, '-') if col_geb else '-',
+                                'Eintrittsjahr': row.get(col_ein, '-') if col_ein else '-',
+                                'Probleme': ' | '.join(probleme[:3]) + ('...' if len(probleme) > 3 else '')
+                            })
+                    
+                    if problem_rows:
+                        df_probleme = pd.DataFrame(problem_rows[:50])  # Max 50 anzeigen
+                        st.dataframe(df_probleme, use_container_width=True, height=300)
+                        
+                        if len(problem_rows) > 50:
+                            st.info(f"ℹ️ Zeigt 50 von {len(problem_rows)} Datensätzen mit Problemen")
+                        
+                        # Download-Button für Problem-Liste
+                        csv_probleme = pd.DataFrame(problem_rows).to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="📥 Problem-Liste als CSV herunterladen",
+                            data=csv_probleme,
+                            file_name="Problem_Datensaetze.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.success("🎉 **Keine Datensätze mit Problemen gefunden!**")
                     
                     # ============================================
                     # RENTENANALYSE
