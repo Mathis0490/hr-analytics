@@ -351,6 +351,290 @@ with tab2:
                             st.metric("💰 Ø Gehalt", f"{df['Gehalt'].mean():,.0f} €")
                     
                     # ============================================
+                    # DATENQUALITÄTS-CHECK
+                    # ============================================
+                    st.markdown("---")
+                    st.markdown("## 🔍 Datenqualitäts-Check")
+                    
+                    st.markdown("""
+                    <div class="help-text">
+                    <b>💡 Was zeigt das?</b><br><br>
+                    Hier sehen Sie auf einen Blick:<br>
+                    • 🔴 <b>Fehlende Daten</b> = Leere Zellen in Ihrer Excel<br>
+                    • 🟡 <b>Ausreißer</b> = Werte die ungewöhnlich hoch oder niedrig sind (könnten Tippfehler sein)
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Alle Spalten für Qualitätscheck
+                    qual_spalten = {
+                        'Geburtsjahr': col_geb,
+                        'Eintrittsjahr': col_ein,
+                        'Geschlecht': col_ges,
+                        'Abteilung': col_abt,
+                        'Karrierelevel': col_lvl,
+                        'Gehalt': col_geh,
+                        'Arbeitszeit': col_az,
+                        'Einstiegsposition': col_ein_pos,
+                        'Aktuelle Position': col_akt_pos,
+                        'Standort': col_ort
+                    }
+                    
+                    # Fehlende Werte berechnen
+                    fehlend_data = []
+                    for name, col in qual_spalten.items():
+                        if col and col in df.columns:
+                            fehlend = df[col].isna().sum()
+                            pct = round(fehlend / len(df) * 100, 1)
+                            fehlend_data.append({
+                                'Spalte': name,
+                                'Fehlend': fehlend,
+                                'Prozent': pct,
+                                'Status': '🔴 Kritisch' if pct > 20 else ('🟡 Prüfen' if pct > 5 else '🟢 OK')
+                            })
+                    
+                    # Ausreißer berechnen
+                    ausreisser_data = []
+                    ausreisser_details = []
+                    
+                    # Alter prüfen
+                    if 'Alter' in df.columns:
+                        alter = df['Alter'].dropna()
+                        if len(alter) > 0:
+                            zu_jung = df[df['Alter'] < 16]
+                            zu_alt = df[df['Alter'] > 70]
+                            ausreisser_data.append({
+                                'Kategorie': 'Alter < 16 Jahre',
+                                'Anzahl': len(zu_jung),
+                                'Status': '🔴' if len(zu_jung) > 0 else '🟢'
+                            })
+                            ausreisser_data.append({
+                                'Kategorie': 'Alter > 70 Jahre',
+                                'Anzahl': len(zu_alt),
+                                'Status': '🔴' if len(zu_alt) > 0 else '🟢'
+                            })
+                            if len(zu_jung) > 0:
+                                for _, row in zu_jung.head(5).iterrows():
+                                    ausreisser_details.append(f"• {row.get('Mitarbeiter_ID', '?')}: Alter {row['Alter']:.0f} (zu jung?)")
+                            if len(zu_alt) > 0:
+                                for _, row in zu_alt.head(5).iterrows():
+                                    ausreisser_details.append(f"• {row.get('Mitarbeiter_ID', '?')}: Alter {row['Alter']:.0f} (zu alt?)")
+                    
+                    # Dienstjahre prüfen
+                    if 'DJ' in df.columns:
+                        dj = df['DJ'].dropna()
+                        if len(dj) > 0:
+                            negativ_dj = df[df['DJ'] < 0]
+                            sehr_lang = df[df['DJ'] > 50]
+                            ausreisser_data.append({
+                                'Kategorie': 'Negative Dienstjahre',
+                                'Anzahl': len(negativ_dj),
+                                'Status': '🔴' if len(negativ_dj) > 0 else '🟢'
+                            })
+                            ausreisser_data.append({
+                                'Kategorie': 'Dienstjahre > 50',
+                                'Anzahl': len(sehr_lang),
+                                'Status': '🟡' if len(sehr_lang) > 0 else '🟢'
+                            })
+                            if len(negativ_dj) > 0:
+                                for _, row in negativ_dj.head(5).iterrows():
+                                    ausreisser_details.append(f"• {row.get('Mitarbeiter_ID', '?')}: {row['DJ']:.0f} Dienstjahre (negativ!)")
+                            if len(sehr_lang) > 0:
+                                for _, row in sehr_lang.head(5).iterrows():
+                                    ausreisser_details.append(f"• {row.get('Mitarbeiter_ID', '?')}: {row['DJ']:.0f} Dienstjahre (sehr lang)")
+                    
+                    # Gehalt prüfen
+                    if 'Gehalt' in df.columns:
+                        gehalt = df['Gehalt'].dropna()
+                        if len(gehalt) > 0:
+                            mean_g = gehalt.mean()
+                            std_g = gehalt.std()
+                            sehr_niedrig = df[(df['Gehalt'] < 15000) & (df['Gehalt'].notna())]
+                            sehr_hoch = df[(df['Gehalt'] > 300000) & (df['Gehalt'].notna())]
+                            # Statistische Ausreißer (mehr als 3 Standardabweichungen)
+                            stat_ausreisser = df[(df['Gehalt'].notna()) & ((df['Gehalt'] < mean_g - 3*std_g) | (df['Gehalt'] > mean_g + 3*std_g))]
+                            
+                            ausreisser_data.append({
+                                'Kategorie': 'Gehalt < 15.000€',
+                                'Anzahl': len(sehr_niedrig),
+                                'Status': '🟡' if len(sehr_niedrig) > 0 else '🟢'
+                            })
+                            ausreisser_data.append({
+                                'Kategorie': 'Gehalt > 300.000€',
+                                'Anzahl': len(sehr_hoch),
+                                'Status': '🔴' if len(sehr_hoch) > 0 else '🟢'
+                            })
+                            ausreisser_data.append({
+                                'Kategorie': 'Statistische Ausreißer (±3σ)',
+                                'Anzahl': len(stat_ausreisser),
+                                'Status': '🟡' if len(stat_ausreisser) > 0 else '🟢'
+                            })
+                            if len(sehr_niedrig) > 0:
+                                for _, row in sehr_niedrig.head(3).iterrows():
+                                    ausreisser_details.append(f"• {row.get('Mitarbeiter_ID', '?')}: {row['Gehalt']:,.0f}€ (sehr niedrig)")
+                            if len(sehr_hoch) > 0:
+                                for _, row in sehr_hoch.head(3).iterrows():
+                                    ausreisser_details.append(f"• {row.get('Mitarbeiter_ID', '?')}: {row['Gehalt']:,.0f}€ (sehr hoch)")
+                    
+                    # Logik-Prüfung: Eintritt vor Geburt?
+                    if col_geb and col_ein:
+                        logik_fehler = df[df[col_ein] < df[col_geb]]
+                        ausreisser_data.append({
+                            'Kategorie': 'Eintritt vor Geburt (!)',
+                            'Anzahl': len(logik_fehler),
+                            'Status': '🔴' if len(logik_fehler) > 0 else '🟢'
+                        })
+                        if len(logik_fehler) > 0:
+                            for _, row in logik_fehler.head(3).iterrows():
+                                ausreisser_details.append(f"• {row.get('Mitarbeiter_ID', '?')}: Geb. {row[col_geb]}, Eintritt {row[col_ein]} (unmöglich!)")
+                    
+                    # Eintritt mit unter 14?
+                    if 'Alter' in df.columns and 'DJ' in df.columns:
+                        zu_frueh = df[(df['Alter'] - df['DJ']) < 14]
+                        ausreisser_data.append({
+                            'Kategorie': 'Eintritt unter 14 Jahren',
+                            'Anzahl': len(zu_frueh),
+                            'Status': '🔴' if len(zu_frueh) > 0 else '🟢'
+                        })
+                        if len(zu_frueh) > 0:
+                            for _, row in zu_frueh.head(3).iterrows():
+                                eintrittsalter = row['Alter'] - row['DJ']
+                                ausreisser_details.append(f"• {row.get('Mitarbeiter_ID', '?')}: Eintritt mit {eintrittsalter:.0f} Jahren (zu jung)")
+                    
+                    # Visualisierung
+                    c1, c2 = st.columns(2)
+                    
+                    with c1:
+                        st.markdown("### 📊 Fehlende Daten pro Spalte")
+                        if fehlend_data:
+                            df_fehlend = pd.DataFrame(fehlend_data)
+                            
+                            # Farben basierend auf Prozent
+                            farben = ['#e74c3c' if p > 20 else '#f39c12' if p > 5 else '#2ecc71' for p in df_fehlend['Prozent']]
+                            
+                            fig = go.Figure()
+                            fig.add_trace(go.Bar(
+                                y=df_fehlend['Spalte'],
+                                x=df_fehlend['Prozent'],
+                                orientation='h',
+                                marker_color=farben,
+                                text=[f"{p}% ({f})" for p, f in zip(df_fehlend['Prozent'], df_fehlend['Fehlend'])],
+                                textposition='outside'
+                            ))
+                            fig.update_layout(
+                                title="Anteil fehlender Werte (%)",
+                                xaxis_title="Fehlend in %",
+                                height=400,
+                                font=dict(size=14),
+                                xaxis=dict(range=[0, max(df_fehlend['Prozent'].max() * 1.3, 10)])
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                            charts_html.append(('00_Datenqualitaet_Fehlend.html', fig.to_html()))
+                            
+                            # Zusammenfassung
+                            kritisch = len([x for x in fehlend_data if '🔴' in x['Status']])
+                            warnung = len([x for x in fehlend_data if '🟡' in x['Status']])
+                            if kritisch > 0:
+                                st.error(f"🔴 {kritisch} Spalte(n) haben mehr als 20% fehlende Daten!")
+                            elif warnung > 0:
+                                st.warning(f"🟡 {warnung} Spalte(n) haben 5-20% fehlende Daten")
+                            else:
+                                st.success("🟢 Alle Spalten haben weniger als 5% fehlende Daten")
+                        else:
+                            st.info("Keine Spalten zum Prüfen gefunden")
+                    
+                    with c2:
+                        st.markdown("### ⚠️ Ausreißer & Fehler")
+                        if ausreisser_data:
+                            df_aus = pd.DataFrame(ausreisser_data)
+                            
+                            # Nur Zeilen mit Problemen anzeigen
+                            df_probleme = df_aus[df_aus['Anzahl'] > 0]
+                            
+                            if len(df_probleme) > 0:
+                                farben = ['#e74c3c' if '🔴' in s else '#f39c12' for s in df_probleme['Status']]
+                                
+                                fig = go.Figure()
+                                fig.add_trace(go.Bar(
+                                    y=df_probleme['Kategorie'],
+                                    x=df_probleme['Anzahl'],
+                                    orientation='h',
+                                    marker_color=farben,
+                                    text=df_probleme['Anzahl'],
+                                    textposition='outside'
+                                ))
+                                fig.update_layout(
+                                    title="Gefundene Probleme",
+                                    xaxis_title="Anzahl Datensätze",
+                                    height=400,
+                                    font=dict(size=14)
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                                charts_html.append(('00_Datenqualitaet_Ausreisser.html', fig.to_html()))
+                            else:
+                                st.success("🟢 Keine offensichtlichen Ausreißer gefunden!")
+                                fig = go.Figure()
+                                fig.add_annotation(
+                                    text="✅ Alles OK!",
+                                    xref="paper", yref="paper",
+                                    x=0.5, y=0.5,
+                                    showarrow=False,
+                                    font=dict(size=40, color='#2ecc71')
+                                )
+                                fig.update_layout(height=400)
+                                st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Kritische Fehler zählen
+                            krit_aus = len([x for x in ausreisser_data if '🔴' in x['Status'] and x['Anzahl'] > 0])
+                            warn_aus = len([x for x in ausreisser_data if '🟡' in x['Status'] and x['Anzahl'] > 0])
+                            
+                            if krit_aus > 0:
+                                st.error(f"🔴 {krit_aus} kritische(r) Fehler gefunden!")
+                            elif warn_aus > 0:
+                                st.warning(f"🟡 {warn_aus} mögliche(r) Ausreißer - bitte prüfen")
+                            else:
+                                st.success("🟢 Keine Ausreißer gefunden")
+                    
+                    # Details zu Ausreißern
+                    if ausreisser_details:
+                        with st.expander("📋 Details zu den gefundenen Problemen (klicken zum Öffnen)"):
+                            st.markdown("**Betroffene Datensätze:**")
+                            for detail in ausreisser_details[:15]:  # Max 15 anzeigen
+                                st.markdown(detail)
+                            if len(ausreisser_details) > 15:
+                                st.markdown(f"*... und {len(ausreisser_details) - 15} weitere*")
+                    
+                    # Gesamtbewertung
+                    st.markdown("### 📊 Gesamtbewertung Datenqualität")
+                    
+                    # Score berechnen
+                    total_fehlend = sum([x['Fehlend'] for x in fehlend_data]) if fehlend_data else 0
+                    max_fehlend = len(df) * len(fehlend_data) if fehlend_data else 1
+                    fehlend_score = 100 - (total_fehlend / max_fehlend * 100) if max_fehlend > 0 else 100
+                    
+                    ausreisser_count = sum([x['Anzahl'] for x in ausreisser_data if '🔴' in x['Status']]) if ausreisser_data else 0
+                    ausreisser_score = max(0, 100 - (ausreisser_count / len(df) * 500)) if len(df) > 0 else 100
+                    
+                    gesamt_score = (fehlend_score * 0.6 + ausreisser_score * 0.4)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Vollständigkeit", f"{fehlend_score:.0f}%", 
+                            help="Wie viele Felder sind ausgefüllt?")
+                    with col2:
+                        st.metric("Plausibilität", f"{ausreisser_score:.0f}%",
+                            help="Wie viele Werte sind plausibel?")
+                    with col3:
+                        farbe = "🟢" if gesamt_score >= 80 else ("🟡" if gesamt_score >= 60 else "🔴")
+                        st.metric(f"{farbe} Gesamtscore", f"{gesamt_score:.0f}%")
+                    
+                    if gesamt_score >= 80:
+                        st.success("✅ **Gute Datenqualität!** Sie können die Analyse starten.")
+                    elif gesamt_score >= 60:
+                        st.warning("⚠️ **Mittlere Datenqualität.** Einige Analysen könnten ungenau sein.")
+                    else:
+                        st.error("❌ **Datenqualität verbesserungswürdig.** Bitte prüfen Sie die markierten Probleme.")
+                    
+                    # ============================================
                     # RENTENANALYSE
                     # ============================================
                     if 'Alter' in df.columns:
